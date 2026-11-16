@@ -4,9 +4,10 @@
 
 Ask a MySQL database questions in plain English and get answers that show the SQL and rows behind them.
 
-<!-- Screenshot: add docs/screenshot.png, then uncomment the next line.
-![A question in the chat, the answer, and the expanded "SQL and result" panel](docs/screenshot.png)
--->
+![A question in the chat, the plain-English answer, and the expanded "SQL and result" panel with the query and its rows](docs/screenshot.png)
+
+*A real run against the Chinook sample database with `gpt-5.6-terra`: the answer, the
+generated SQL and the rows it returned.*
 
 ## What it does
 
@@ -187,7 +188,9 @@ app after changing `.env`.
 - How many customers are there in each country?
 - What were total sales by year?
 - Which genre has the longest average track length?
-- Who are the top 5 customers by total spend? Then: which countries are they from?
+- Who are the top 5 customers by total spending, and which country is each from? Then, as
+  a follow-up: for the first customer on that list, which genres did she buy the most
+  tracks from?
 
 ## Safety
 
@@ -252,6 +255,11 @@ off), the chain (answer, retry after a database error, guard rejection without r
 the query, history trimming) and the Streamlit UI through `streamlit.testing.v1.AppTest`
 (including that `DB_PASSWORD` is not sent to the browser). GitHub Actions runs the same
 commands on Python 3.12 and 3.13 for every push to `main` and every pull request.
+
+The MySQL layers were also checked by hand against the Docker demo database: a query
+without `LIMIT` comes back as 200 rows marked as cut off, a `;`-separated batch fails with
+a syntax error, a `DELETE` run as `root` fails inside the read-only transaction, and
+`chatbot_reader` is refused any write.
 
 ## Project structure
 
