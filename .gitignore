@@ -1,0 +1,6 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+docker/init/00-chinook.sql

@@ -1,0 +1,25 @@
+# Local demo database: MySQL 8.4 with the Chinook sample data and a read-only user.
+# Setup steps are in the README. Passwords come from .env; there are no defaults.
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+      READER_PASSWORD: ${READER_PASSWORD:?Set READER_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${MYSQL_PORT:-3306}:3306"
+    volumes:
+      # Runs once, on the first start with an empty data volume:
+      # 00-chinook.sql (you download it), then 01-reader.sh.
+      - ./docker/init:/docker-entrypoint-initdb.d:ro
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      # Answers only after the init scripts have finished and MySQL listens on TCP.
+      test: ["CMD", "mysqladmin", "ping", "--host=127.0.0.1", "--silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
+volumes:
+  mysql-data:
