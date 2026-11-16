@@ -4,7 +4,9 @@
 
 Ask a MySQL database questions in plain English and get answers that show the SQL and rows behind them.
 
+<!-- Screenshot: add docs/screenshot.png, then uncomment the next line.
 ![A question in the chat, the answer, and the expanded "SQL and result" panel](docs/screenshot.png)
+-->
 
 ## What it does
 
@@ -18,8 +20,8 @@ Ask a MySQL database questions in plain English and get answers that show the SQ
 - Follow-up questions work: the last 10 chat messages are sent along with each question.
 - If MySQL rejects the query (a misspelled column, for example), the model gets one more
   try with the error message.
-- Queries that are not a single read-only `SELECT` are refused before they reach the
-  database (see [Safety](#safety)).
+- Before a query runs, the app checks that it is a single read-only `SELECT` and refuses
+  it otherwise (see [Safety](#safety)).
 
 ## How it works
 
@@ -51,9 +53,11 @@ answer in the chat + "SQL and result" panel
    statement and three sample rows per table. It is read once at connect time.
 2. **Guard** (`sql_chat/guard.py`). Strips markdown fences and trailing semicolons from
    the model's reply, then parses the SQL with `sqlparse` and rejects anything that is
-   not a single read-only `SELECT`. A rejected query is shown but never run or retried.
+   not a single read-only `SELECT`, or that MySQL might read differently from `sqlparse`.
+   A rejected query is shown but never run or retried.
 3. **Execution** (`sql_chat/db.py`). The app runs the query itself through SQLAlchemy, in
-   a read-only transaction with a time limit and a row cap, and always rolls back.
+   a read-only transaction with a time limit, keeps at most 200 rows, and always rolls
+   back.
 4. **Answer step** (`sql_chat/chains.py`). A second prompt gets the question, the SQL
    and the rows (with a note when there were more than 200) and writes the reply.
 
@@ -112,18 +116,32 @@ You need Python 3.12 or 3.13 and an OpenAI API key. Option A also needs Docker.
    `docker/init/01-reader.sh` creates `chatbot_reader`, a user that can only `SELECT`
    from the `Chinook` database. The port is bound to `127.0.0.1` only.
 
-4. Install the app and start it:
+4. Create a virtual environment with Python 3.12 or 3.13, install the app and start it.
+
+   macOS and Linux (if `python3 --version` shows another version, use `python3.13` or
+   `python3.12` in the first line):
 
    ```bash
-   python -m venv .venv
-   source .venv/bin/activate        # Windows: .venv\Scripts\activate
+   python3 -m venv .venv
+   source .venv/bin/activate
    pip install -r requirements.txt
    streamlit run app.py
    ```
 
+   Windows (PowerShell or Command Prompt; use `-3.12` for Python 3.12):
+
+   ```powershell
+   py -3.13 -m venv .venv
+   .venv\Scripts\python -m pip install -r requirements.txt
+   .venv\Scripts\python -m streamlit run app.py
+   ```
+
+   The app opens at http://127.0.0.1:8501. `.streamlit/config.toml` makes it listen on
+   this computer only.
+
 5. In the sidebar, host, port, user (`chatbot_reader`) and database (`Chinook`) are
-   filled in from `.env`. Type your `READER_PASSWORD` (or set `DB_PASSWORD` in `.env` to
-   fill it in too), click **Connect** and ask a question.
+   filled in from `.env`. Type your `READER_PASSWORD` (or set `DB_PASSWORD` in `.env` and
+   leave the field empty), click **Connect** and ask a question.
 
 The init scripts run only when the data volume is empty. If you added the Chinook file
 after the first start, or the first start failed, reset the database with
@@ -157,7 +175,7 @@ app after changing `.env`.
 | `DB_HOST` | `127.0.0.1` | app | Default host in the connection form. |
 | `DB_PORT` | `3306` | app | Default port. |
 | `DB_USER` | empty | app | Default user. |
-| `DB_PASSWORD` | empty | app | Default password. Leave empty to type it in the sidebar. |
+| `DB_PASSWORD` | empty | app | Password used when the sidebar's password field is left empty. It is never sent to the browser. |
 | `DB_NAME` | `Chinook` | app | Default database. |
 | `MYSQL_ROOT_PASSWORD` | none (required) | `docker compose` | Root password of the demo database. |
 | `READER_PASSWORD` | none (required) | `docker compose` | Password for `chatbot_reader`. |
@@ -173,7 +191,8 @@ app after changing `.env`.
 
 ## Safety
 
-The model writes SQL and the app runs it, so the app checks the SQL in two places:
+The model writes SQL and the app runs it, so the app protects the database in three
+ways:
 
 1. **Guard, before the query is run** (`sql_chat/guard.py`). The query must be exactly
    one statement of type `SELECT` (`WITH ... SELECT` is fine). It is rejected if, outside
@@ -182,21 +201,39 @@ The model writes SQL and the app runs it, so the app checks the SQL in two place
    `REVOKE`, `CALL`, `DO`, `HANDLER`, `LOAD`, `LOCK`, `UNLOCK`, `SET`, `INTO`, `OUTFILE`
    or `DUMPFILE` (function calls such as `REPLACE(Name, 'a', 'b')` are allowed); if it
    refers to the functions `SLEEP`, `BENCHMARK` or `LOAD_FILE`; or if it has a MySQL
-   executable comment (`/*! ... */`) or an optimizer hint (`/*+ ... */`). The guard errs
-   on the side of refusing, so some harmless queries are refused too.
-2. **Database, while the query runs** (`sql_chat/db.py`). Each query runs in a
-   `START TRANSACTION READ ONLY` transaction that is always rolled back, with
-   `MAX_EXECUTION_TIME` set to 15 seconds and `sql_select_limit` set so MySQL sends at
-   most 201 rows. The app keeps 200 and tells the model when the result was cut off.
+   executable comment (`/*! ... */`) or an optimizer hint (`/*+ ... */`).
 
-Neither layer replaces database permissions: always connect with a read-only user, like
+   `sqlparse` does not read quotes and comments exactly the way MySQL does, and the
+   guard never checks text inside a string or a comment. So the guard finds the strings,
+   quoted names and comments a second time with MySQL's rules and refuses the query if
+   the two readings differ: for example a `#` (a comment in MySQL), `$$` quoting, or a
+   `--` comment ended by a lone carriage return. It also refuses any backslash, control
+   characters and the word `DELIMITER` (the MySQL driver rewrites queries that contain
+   it). The guard errs on the side of refusing, so some harmless queries are refused too.
+2. **Connection settings** (`sql_chat/db.py`). MySQL connections are opened with
+   multi-statement support turned off (it is on by default in mysql-connector), so the
+   server rejects a `;`-separated batch even if one got past the guard.
+3. **Database, while the query runs** (`sql_chat/db.py`). Each query runs in a
+   `START TRANSACTION READ ONLY` transaction that is always rolled back, with
+   `MAX_EXECUTION_TIME` set to 15 seconds. `sql_select_limit` makes MySQL send at most
+   201 rows for a query without its own `LIMIT`. A query with a larger `LIMIT` gets all
+   its rows, and the driver holds them in memory while the app reads the first 201. The
+   app keeps 200 rows and tells the model when the result was cut off.
+
+None of these replaces database permissions: always connect with a read-only user, like
 the `chatbot_reader` user the Docker setup creates. Do not point this app at a
 production database with a user that can write.
 
-Credentials: nothing is hardcoded, and the password field starts empty unless
-`DB_PASSWORD` is set. The connection URL is built with SQLAlchemy's `URL.create`, so
+Credentials: nothing is hardcoded. The password field always starts empty; if you leave
+it empty, the app connects with `DB_PASSWORD`, which stays on the server and is never
+sent to the browser. The connection URL is built with SQLAlchemy's `URL.create`, so
 special characters in passwords are escaped. Connection errors show the error type and
 the driver's message, never the password.
+
+Network: the app has no login, so anyone who can open it can query the database and use
+your OpenAI key. `.streamlit/config.toml` makes Streamlit listen on `127.0.0.1` only
+(Streamlit's default is every network interface). Keep it that way unless the app sits
+behind something that controls access.
 
 ## Testing
 
@@ -210,10 +247,11 @@ pytest -q
 The tests need no MySQL, OpenAI key or network: in-memory SQLite stands in for MySQL and
 LangChain's `FakeListChatModel` for OpenAI. They cover the guard (tables of allowed and
 rejected SQL), URL escaping, the row cap, the order of the MySQL session statements
-(against a fake connection), the chain (answer, retry after a database error, guard
-rejection without running the query, history trimming) and the Streamlit UI through
-`streamlit.testing.v1.AppTest`. GitHub Actions runs the same commands on Python 3.12 and
-3.13 for every push to `main` and every pull request.
+(against a fake connection), the client flags handed to mysql-connector (multi-statements
+off), the chain (answer, retry after a database error, guard rejection without running
+the query, history trimming) and the Streamlit UI through `streamlit.testing.v1.AppTest`
+(including that `DB_PASSWORD` is not sent to the browser). GitHub Actions runs the same
+commands on Python 3.12 and 3.13 for every push to `main` and every pull request.
 
 ## Project structure
 
@@ -225,6 +263,7 @@ sql_chat/
   guard.py                  read-only SQL check
   db.py                     connection, schema text, read-only query execution
 tests/                      pytest suite (no MySQL, OpenAI or network needed)
+.streamlit/config.toml      Streamlit settings (listen on 127.0.0.1 only)
 compose.yaml                MySQL 8.4 demo database
 docker/init/01-reader.sh    creates the read-only chatbot_reader user
 .github/workflows/ci.yml    lint and tests on Python 3.12 and 3.13
