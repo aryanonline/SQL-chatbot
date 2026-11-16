@@ -32,6 +32,27 @@ def test_app_loads(monkeypatch):
     }
 
 
+def test_db_password_is_used_but_not_sent_to_the_browser(monkeypatch, sqlite_engine):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
+    monkeypatch.setenv("DB_PASSWORD", "env-db-password")
+    urls = []
+
+    def fake_connect(url):
+        urls.append(url)
+        return Database(sqlite_engine, schema="Artist")
+
+    monkeypatch.setattr(db, "connect", fake_connect)
+    at = run_app()
+
+    assert [field.value for field in at.sidebar.text_input if field.label == "Password"] == [""]
+    assert "env-db-password" not in [field.value for field in at.sidebar.text_input]
+
+    at.sidebar.button[0].click().run()
+
+    assert not at.exception
+    assert urls[0].password == "env-db-password"
+
+
 def test_chat_before_connecting_asks_to_connect_first(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
     at = run_app()

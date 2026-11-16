@@ -69,9 +69,15 @@ def connection_sidebar() -> None:
         host = st.text_input("Host", value=defaults.host)
         port = st.text_input("Port", value=defaults.port)
         user = st.text_input("User", value=defaults.user)
-        password = st.text_input("Password", value=defaults.password, type="password")
+        # Never pre-fill the password: a widget's value is sent to the browser.
+        password = st.text_input(
+            "Password",
+            type="password",
+            placeholder="Leave empty to use DB_PASSWORD" if defaults.password else "",
+        )
         database = st.text_input("Database", value=defaults.database)
         if st.button("Connect"):
+            password = password or defaults.password
             old = st.session_state.pop("db", None)
             if old is not None:
                 old.engine.dispose()
