@@ -73,7 +73,7 @@ def connection_sidebar() -> None:
         password = st.text_input(
             "Password",
             type="password",
-            placeholder="Leave empty to use DB_PASSWORD" if defaults.password else "",
+            placeholder="Uses DB_PASSWORD if empty" if defaults.password else "",
         )
         database = st.text_input("Database", value=defaults.database)
         if st.button("Connect"):
