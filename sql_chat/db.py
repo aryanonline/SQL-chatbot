@@ -5,11 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from langchain_community.utilities import SQLDatabase
+from mysql.connector.constants import ClientFlag
 from sqlalchemy import create_engine
-from sqlalchemy.engine import URL, Engine
+from sqlalchemy.engine import URL, Engine, make_url
 
 MAX_ROWS = 200
 MAX_EXECUTION_MS = 15_000
+# mysql-connector turns multi-statement support on by default, so "SELECT 1; DELETE ..."
+# would run both statements. These flags turn it off, and the server then refuses such a
+# batch as a syntax error. FOUND_ROWS is the flag SQLAlchemy adds, kept as it would be.
+MYSQL_CLIENT_FLAGS = (ClientFlag.FOUND_ROWS, -ClientFlag.MULTI_STATEMENTS)
 
 
 @dataclass
@@ -42,9 +47,18 @@ def build_url(user: str, password: str, host: str, port: str | int, database: st
     )
 
 
+def make_engine(url: URL | str) -> Engine:
+    """Create the connection pool. No connection is opened until it is used."""
+    if make_url(url).get_backend_name() == "mysql":
+        # connect_args replace the client_flags SQLAlchemy computes for mysql-connector.
+        connect_args = {"client_flags": MYSQL_CLIENT_FLAGS}
+        return create_engine(url, pool_pre_ping=True, connect_args=connect_args)
+    return create_engine(url, pool_pre_ping=True)
+
+
 def connect(url: URL | str) -> Database:
     """Open a connection pool, check that it works and read the schema once."""
-    engine = create_engine(url, pool_pre_ping=True)
+    engine = make_engine(url)
     try:
         schema = SQLDatabase(engine).get_table_info()
     except Exception:
@@ -58,9 +72,12 @@ def run_read_only(
 ) -> QueryResult:
     """Run one query and return its columns and at most max_rows rows.
 
-    On MySQL the query runs in a READ ONLY transaction, is stopped after timeout_ms, and
-    the server sends at most max_rows + 1 rows (the extra row only tells us there were
-    more). The transaction is always rolled back. Database errors propagate.
+    On MySQL the query runs in a READ ONLY transaction and is stopped after timeout_ms.
+    sql_select_limit caps a query that has no LIMIT of its own at max_rows + 1 rows (the
+    extra row only tells us there were more). A query with its own larger LIMIT is not
+    capped by the server, and SQLAlchemy's mysql-connector dialect buffers every row it
+    sends; only the first max_rows + 1 are read from that buffer. The transaction is
+    always rolled back. Database errors propagate.
     """
     with engine.connect() as conn:
         if engine.dialect.name == "mysql":

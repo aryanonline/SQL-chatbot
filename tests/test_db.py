@@ -1,11 +1,14 @@
 from types import SimpleNamespace
 
+import mysql.connector
 import pytest
+from mysql.connector.connection import MySQLConnection
+from mysql.connector.constants import ClientFlag
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import SQLAlchemyError
 
-from sql_chat.db import build_url, connect, describe_error, run_read_only
+from sql_chat.db import build_url, connect, describe_error, make_engine, run_read_only
 
 
 def test_build_url_escapes_special_characters():
@@ -108,6 +111,39 @@ def test_mysql_queries_run_in_a_read_only_transaction_with_limits():
     assert connection.rolled_back
     assert result.rows == [(1,), (2,)]
     assert result.truncated is True
+
+
+class _ConnectCalled(Exception):
+    pass
+
+
+def test_mysql_connections_turn_off_multi_statements(monkeypatch):
+    """The flags SQLAlchemy hands to mysql-connector leave out MULTI_STATEMENTS, so the
+    server refuses a "SELECT ...; DELETE ..." batch. Checked without a MySQL server."""
+    received = {}
+
+    def fake_connect(*args, **kwargs):
+        received.update(kwargs)
+        raise _ConnectCalled
+
+    monkeypatch.setattr(mysql.connector, "connect", fake_connect)
+    engine = make_engine(build_url("chatbot_reader", "secret", "127.0.0.1", "3306", "Chinook"))
+    with pytest.raises(_ConnectCalled):
+        engine.connect()
+
+    driver = MySQLConnection()  # not connected: only used to apply the flags
+    assert driver.isset_client_flag(ClientFlag.MULTI_STATEMENTS)  # the driver's default
+    driver.client_flags = received["client_flags"]
+    assert not driver.isset_client_flag(ClientFlag.MULTI_STATEMENTS)
+    assert driver.isset_client_flag(ClientFlag.FOUND_ROWS)
+
+
+def test_make_engine_passes_no_mysql_flags_to_sqlite():
+    engine = make_engine("sqlite://")
+    try:
+        assert run_read_only(engine, "SELECT 1").rows == [(1,)]
+    finally:
+        engine.dispose()
 
 
 def test_connect_reads_the_schema_once(tmp_path):
