@@ -4,6 +4,8 @@
 # Listen on this computer only. The app has no login: anyone who can open it can query
 # the database and spend your OpenAI credit. Streamlit's default is every network interface.
 address = "127.0.0.1"
+# Skip the one-time "Welcome to Streamlit! ... Email:" prompt in the terminal.
+showEmailPrompt = false
 
 [browser]
 # The URL Streamlit prints and opens, matching the address above.

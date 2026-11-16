@@ -95,8 +95,13 @@ You need Python 3.12 or 3.13 and an OpenAI API key. Option A also needs Docker.
    cp .env.example .env
    ```
 
+   In Command Prompt, use `copy .env.example .env` instead of `cp`.
+
    In `.env`, set `OPENAI_API_KEY`, `MYSQL_ROOT_PASSWORD` and `READER_PASSWORD` (choose
-   your own passwords; `docker compose` refuses to start without them).
+   your own passwords; `docker compose` refuses to start without them). Use only letters,
+   digits, `-` and `_` in the two database passwords: `docker compose` reads a `$` as the
+   start of a variable, and the init script cannot log in with a backslash in the root
+   password.
 
 2. Download the Chinook MySQL script (release v1.4.5, 616,450 bytes) into `docker/init/`:
 
@@ -137,6 +142,9 @@ You need Python 3.12 or 3.13 and an OpenAI API key. Option A also needs Docker.
    .venv\Scripts\python -m streamlit run app.py
    ```
 
+   If `py` reports that no 3.13 runtime is installed, install Python 3.13 (`py install
+   3.13` when `py` suggests it, or the python.org installer) or use `-3.12`.
+
    The app opens at http://127.0.0.1:8501. `.streamlit/config.toml` makes it listen on
    this computer only.
 
@@ -165,9 +173,9 @@ after the first start, or the first start failed, reset the database with
 
 ## Configuration
 
-The app reads its settings from environment variables and from a `.env` file in the
-project folder; variables already set in the environment take precedence. Restart the
-app after changing `.env`.
+The app reads its settings from environment variables and from the `.env` file in the
+project folder (only that one; `.env` files in parent folders are ignored). Variables
+already set in the environment take precedence. Restart the app after changing `.env`.
 
 | Variable | Default | Read by | Purpose |
 | --- | --- | --- | --- |
@@ -240,11 +248,22 @@ behind something that controls access.
 
 ## Testing
 
+macOS and Linux, with the virtual environment active:
+
 ```bash
 pip install -r requirements-dev.txt
 ruff check .
 ruff format --check .
 pytest -q
+```
+
+Windows:
+
+```powershell
+.venv\Scripts\python -m pip install -r requirements-dev.txt
+.venv\Scripts\python -m ruff check .
+.venv\Scripts\python -m ruff format --check .
+.venv\Scripts\python -m pytest -q
 ```
 
 The tests need no MySQL, OpenAI key or network: in-memory SQLite stands in for MySQL and
@@ -271,7 +290,7 @@ sql_chat/
   guard.py                  read-only SQL check
   db.py                     connection, schema text, read-only query execution
 tests/                      pytest suite (no MySQL, OpenAI or network needed)
-.streamlit/config.toml      Streamlit settings (listen on 127.0.0.1 only)
+.streamlit/config.toml      Streamlit settings (127.0.0.1 only, no first-run email prompt)
 compose.yaml                MySQL 8.4 demo database
 docker/init/01-reader.sh    creates the read-only chatbot_reader user
 .github/workflows/ci.yml    lint and tests on Python 3.12 and 3.13
