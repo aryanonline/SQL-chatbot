@@ -12,14 +12,21 @@ ALLOWED = [
     "WITH RECURSIVE n AS (SELECT 1 AS i UNION ALL SELECT i + 1 FROM n WHERE i < 3) SELECT i FROM n",
     "SELECT Name FROM Track WHERE Name = 'delete'",
     "SELECT Name FROM Track WHERE Name LIKE '%drop table%'",
-    "SELECT 'it''s', 'it\\'s' FROM Artist",
+    "SELECT 'it''s', '''', '' FROM Artist",
+    'SELECT "it""s" FROM Artist',
     "SELECT REPLACE(Name, 'a', 'b') FROM Artist",
     "SELECT `Name` FROM `Artist`",
-    "SELECT `update`, `set` FROM `Order`",
+    "SELECT `update`, `set`, `it``s` FROM `Order`",
     "-- the top artists\nSELECT Name FROM Artist",
+    "-- the top artists\r\nSELECT Name FROM Artist",
     "SELECT Name FROM Artist /* a comment; with a semicolon */ LIMIT 3",
     "SELECT Name FROM Artist WHERE ArtistId IN (SELECT ArtistId FROM Album)",
     "SELECT 1 UNION SELECT 2",
+    # '#' and '$' are fine inside string literals and comments.
+    "SELECT Name FROM Track WHERE Name LIKE '%#%'",
+    "SELECT CONCAT('$', ROUND(SUM(Total), 2)) AS total FROM Invoice",
+    "SELECT Name FROM Artist -- it's #1\nLIMIT 3",
+    "SELECT 5-3, 2*-1, 4 - -1 FROM Artist",
 ]
 
 REJECTED = [
@@ -49,7 +56,23 @@ REJECTED = [
     ("SELECT outfile FROM t", "OUTFILE"),
     ("SELECT /*+ MAX_EXECUTION_TIME(100000) */ * FROM Track", "hints"),
     ("SELECT 1 --1, SLEEP(5)", "'--'"),
+    ("SELECT 1 -- x", "'--'"),  # MySQL needs an ASCII space after '--'
     ("SELECT 'unterminated FROM Artist", "parsed"),
+    # sqlparse and MySQL disagree about where these strings and comments end, so text
+    # the guard would skip as a string or comment is code to MySQL.
+    ("SELECT 1 #'\n; COMMIT; DELETE FROM Artist; COMMIT #'", "differently"),
+    ("SELECT 1 #'\n, SLEEP(5) #'", "differently"),
+    ("SELECT 1 -- x\r'\n; DROP TABLE Artist -- '", "differently"),
+    ("SELECT 1 AS $$, SLEEP(5) AS $$", "differently"),
+    ("SELECT 1 AS ´, SLEEP(5) AS ´", "differently"),
+    ("SELECT [a; DROP TABLE Artist; SELECT b]", "differently"),
+    ("SELECT 1 +-- 2", "differently"),
+    ("SELECT 1 #", "differently"),
+    ("SELECT 'it\\'s' FROM Artist", "Backslash"),
+    ("SELECT 'a\\\\'; COMMIT; DELETE FROM Artist; COMMIT; -- '", "Backslash"),
+    ("SELECT 'abc\\\\', SLEEP(5) -- '", "Backslash"),
+    ("SELECT 1\x00", "Control"),
+    ("SELECT 'x\nDELIMITER //\n' FROM Artist", "DELIMITER"),
 ]
 
 
